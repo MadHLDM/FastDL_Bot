@@ -15,6 +15,10 @@ class DiscordConfig:
     command_name: str = "upload_fastdl"
     validate_command_name: str = "validate_fastdl"
     enable_message_uploads: bool = False
+    require_access_rules: bool = True
+    attachment_download_timeout_seconds: int = 120
+    rate_limit_max_requests: int = 3
+    rate_limit_window_seconds: int = 60
 
 
 @dataclass(frozen=True)
@@ -25,6 +29,7 @@ class StorageConfig:
     allow_overwrite: bool = False
     backup_existing: bool = True
     compressed_formats: tuple[str, ...] = ()
+    install_lock_timeout_seconds: int = 300
 
 
 @dataclass(frozen=True)
@@ -122,6 +127,10 @@ def load_config(path: str | Path) -> AppConfig:
             "command_name": ("FASTDL_DISCORD_COMMAND_NAME", str),
             "validate_command_name": ("FASTDL_DISCORD_VALIDATE_COMMAND_NAME", str),
             "enable_message_uploads": ("FASTDL_ENABLE_MESSAGE_UPLOADS", parse_bool),
+            "require_access_rules": ("FASTDL_REQUIRE_ACCESS_RULES", parse_bool),
+            "attachment_download_timeout_seconds": ("FASTDL_ATTACHMENT_DOWNLOAD_TIMEOUT_SECONDS", int),
+            "rate_limit_max_requests": ("FASTDL_RATE_LIMIT_MAX_REQUESTS", int),
+            "rate_limit_window_seconds": ("FASTDL_RATE_LIMIT_WINDOW_SECONDS", int),
         },
     )
     storage_data = _apply_env_overrides(
@@ -132,6 +141,7 @@ def load_config(path: str | Path) -> AppConfig:
             "allow_overwrite": ("FASTDL_ALLOW_OVERWRITE", parse_bool),
             "backup_existing": ("FASTDL_BACKUP_EXISTING", parse_bool),
             "compressed_formats": ("FASTDL_COMPRESSED_FORMATS", parse_str_tuple),
+            "install_lock_timeout_seconds": ("FASTDL_INSTALL_LOCK_TIMEOUT_SECONDS", int),
         },
     )
     content_data = _content_types_with_env_overrides(data.get("content_types", {}))
@@ -147,6 +157,12 @@ def load_config(path: str | Path) -> AppConfig:
         command_name=str(discord_data.get("command_name", "upload_fastdl")),
         validate_command_name=str(discord_data.get("validate_command_name", "validate_fastdl")),
         enable_message_uploads=bool(discord_data.get("enable_message_uploads", False)),
+        require_access_rules=bool(discord_data.get("require_access_rules", True)),
+        attachment_download_timeout_seconds=int(
+            discord_data.get("attachment_download_timeout_seconds", 120)
+        ),
+        rate_limit_max_requests=int(discord_data.get("rate_limit_max_requests", 3)),
+        rate_limit_window_seconds=int(discord_data.get("rate_limit_window_seconds", 60)),
     )
 
     storage = StorageConfig(
@@ -163,6 +179,7 @@ def load_config(path: str | Path) -> AppConfig:
             normalize_compressed_format(value)
             for value in storage_data.get("compressed_formats", [])
         ),
+        install_lock_timeout_seconds=int(storage_data.get("install_lock_timeout_seconds", 300)),
     )
 
     if storage.backend != "local":
@@ -174,8 +191,25 @@ def load_config(path: str | Path) -> AppConfig:
     }
     if not content_types:
         raise ValueError("at least one content type must be configured")
+    if discord.require_access_rules:
+        _validate_access_rules(content_types)
 
     return AppConfig(discord=discord, storage=storage, content_types=content_types)
+
+
+def _validate_access_rules(content_types: dict[str, ContentTypeConfig]) -> None:
+    missing: list[str] = []
+    for name, content in content_types.items():
+        if not content.allowed_channel_ids:
+            missing.append(f"{name}: allowed_channel_ids")
+        if not content.allowed_role_ids:
+            missing.append(f"{name}: allowed_role_ids")
+    if missing:
+        joined = ", ".join(missing)
+        raise ValueError(
+            "access rules are required for every content type; configure these fields "
+            f"or set require_access_rules=false for local testing only: {joined}"
+        )
 
 
 def normalize_compressed_format(value: str) -> str:

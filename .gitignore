@@ -1,6 +1,7 @@
 __pycache__/
 *.py[cod]
 .pytest_cache/
+.pytest-run/
 .pytest-tmp/
 .pytest-tmp-*/
 .venv/
@@ -22,6 +23,8 @@ config.production.json
 logs/
 .incoming/
 .backups/
+.uploads/
+.fastdl-upload.lock
 .verify-tmp/
 .verify-tmp-*/
 .verify-*/

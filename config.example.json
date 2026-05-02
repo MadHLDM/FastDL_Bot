@@ -5,7 +5,11 @@
     "audit_channel_id": null,
     "command_name": "upload_fastdl",
     "validate_command_name": "validate_fastdl",
-    "enable_message_uploads": false
+    "enable_message_uploads": false,
+    "require_access_rules": true,
+    "attachment_download_timeout_seconds": 120,
+    "rate_limit_max_requests": 3,
+    "rate_limit_window_seconds": 60
   },
   "storage": {
     "backend": "local",
@@ -13,7 +17,8 @@
     "fastdl_root_path": null,
     "allow_overwrite": false,
     "backup_existing": true,
-    "compressed_formats": []
+    "compressed_formats": [],
+    "install_lock_timeout_seconds": 300
   },
   "content_types": {
     "map": {

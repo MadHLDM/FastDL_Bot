@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 from pathlib import Path
 
@@ -9,6 +10,7 @@ from discord import app_commands
 from .audit import AuditRecord, append_audit_log, sha256_file
 from .config import AppConfig, ContentTypeConfig
 from .extractor import extract_validated_zip
+from .rate_limit import RateLimiter
 from .storage import LocalStorage
 from .validator import ValidationError, validate_zip_file
 
@@ -25,6 +27,11 @@ class FastDLUploadBot(discord.Client):
         self.config = config
         self.tree = app_commands.CommandTree(self)
         self.storage = LocalStorage(config.storage)
+        self._install_lock = asyncio.Lock()
+        self._rate_limiter = RateLimiter(
+            max_requests=config.discord.rate_limit_max_requests,
+            window_seconds=config.discord.rate_limit_window_seconds,
+        )
 
     async def setup_hook(self) -> None:
         self._register_commands()
@@ -128,12 +135,21 @@ class FastDLUploadBot(discord.Client):
     ) -> None:
         content_type = self.config.content_types.get(content_type_name)
         if content_type is None:
+            await self._reject_unknown_content_type(
+                actor,
+                channel_id,
+                content_type_name,
+                attachment,
+                reply,
+            )
             await reply(f"Unknown content type: `{content_type_name}`.", ephemeral=True)
             return
 
         failure_reason = self._permission_error(actor, channel_id, content_type)
         if failure_reason:
             await self._reject(actor, channel_id, content_type, attachment, failure_reason, reply)
+            return
+        if await self._rate_limit_reject(actor, content_type, attachment, "upload", channel_id, reply):
             return
 
         if not attachment.filename.lower().endswith(".zip"):
@@ -146,17 +162,38 @@ class FastDLUploadBot(discord.Client):
         download_dir = self.storage.create_download_dir()
         try:
             zip_path = download_dir / "upload.zip"
-            await attachment.save(zip_path)
+            try:
+                await asyncio.wait_for(
+                    attachment.save(zip_path),
+                    timeout=self.config.discord.attachment_download_timeout_seconds,
+                )
+            except TimeoutError:
+                await self._reject(
+                    actor,
+                    channel_id,
+                    content_type,
+                    attachment,
+                    "attachment download timed out",
+                    reply,
+                )
+                return
             digest = sha256_file(zip_path)
             staging_dir = self.storage.create_staging_dir()
             try:
-                validation = validate_zip_file(
+                validation = await asyncio.to_thread(
+                    validate_zip_file,
                     str(zip_path),
                     content_type,
-                    existing_roots=(self.storage.root,),
+                    (self.storage.root,),
                 )
-                extract_validated_zip(str(zip_path), staging_dir, validation.entries)
-                install_result = self.storage.install(staging_dir)
+                await asyncio.to_thread(
+                    extract_validated_zip,
+                    str(zip_path),
+                    staging_dir,
+                    validation.entries,
+                )
+                async with self._install_lock:
+                    install_result = await asyncio.to_thread(self.storage.install, staging_dir)
                 installed_relative = tuple(
                     self.storage.display_path(path)
                     for path in install_result.installed_files
@@ -244,12 +281,21 @@ class FastDLUploadBot(discord.Client):
     ) -> None:
         content_type = self.config.content_types.get(content_type_name)
         if content_type is None:
+            await self._reject_unknown_content_type(
+                actor,
+                channel_id,
+                content_type_name,
+                attachment,
+                reply,
+            )
             await reply(f"Unknown content type: `{content_type_name}`.", ephemeral=True)
             return
 
         failure_reason = self._permission_error(actor, channel_id, content_type)
         if failure_reason:
             await self._reject(actor, channel_id, content_type, attachment, failure_reason, reply)
+            return
+        if await self._rate_limit_reject(actor, content_type, attachment, "validate", channel_id, reply):
             return
 
         if not attachment.filename.lower().endswith(".zip"):
@@ -262,13 +308,28 @@ class FastDLUploadBot(discord.Client):
         download_dir = self.storage.create_download_dir()
         try:
             zip_path = download_dir / "upload.zip"
-            await attachment.save(zip_path)
+            try:
+                await asyncio.wait_for(
+                    attachment.save(zip_path),
+                    timeout=self.config.discord.attachment_download_timeout_seconds,
+                )
+            except TimeoutError:
+                await self._reject(
+                    actor,
+                    channel_id,
+                    content_type,
+                    attachment,
+                    "attachment download timed out",
+                    reply,
+                )
+                return
             digest = sha256_file(zip_path)
             try:
-                validation = validate_zip_file(
+                validation = await asyncio.to_thread(
+                    validate_zip_file,
                     str(zip_path),
                     content_type,
-                    existing_roots=(self.storage.root,),
+                    (self.storage.root,),
                 )
             except ValidationError as exc:
                 await self._reject(
@@ -330,6 +391,28 @@ class FastDLUploadBot(discord.Client):
             return "user does not have an authorized role"
         return None
 
+    async def _rate_limit_reject(
+        self,
+        actor: discord.abc.User,
+        content_type: ContentTypeConfig,
+        attachment: discord.Attachment,
+        action: str,
+        channel_id: int,
+        reply,
+    ) -> bool:
+        result = self._rate_limiter.check(actor.id, f"{action}:{content_type.name}")
+        if result.allowed:
+            return False
+        await self._reject(
+            actor,
+            channel_id,
+            content_type,
+            attachment,
+            f"rate limit exceeded; try again in {result.retry_after_seconds}s",
+            reply,
+        )
+        return True
+
     def _content_type_for_channel(self, channel_id: int) -> ContentTypeConfig | None:
         matches = [
             content
@@ -363,6 +446,27 @@ class FastDLUploadBot(discord.Client):
         append_audit_log(record)
         await self._send_audit(record)
         await reply(f"Upload rejected: {reason}", ephemeral=True)
+
+    async def _reject_unknown_content_type(
+        self,
+        actor: discord.abc.User,
+        channel_id: int,
+        content_type_name: str,
+        attachment: discord.Attachment,
+        reply,
+    ) -> None:
+        record = AuditRecord(
+            status="rejected",
+            user_id=actor.id,
+            user_name=str(actor),
+            channel_id=channel_id,
+            content_type=content_type_name,
+            filename=attachment.filename,
+            sha256="not-downloaded",
+            message="unknown content type",
+        )
+        append_audit_log(record)
+        await self._send_audit(record)
 
     async def _send_audit(self, record: AuditRecord) -> None:
         channel_id = self.config.discord.audit_channel_id
