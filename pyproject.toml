@@ -1,0 +1,21 @@
+[project]
+name = "sven-fastdl-upload-bot"
+version = "0.1.0"
+description = "Discord upload bot for Sven Co-op FastDL packages."
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "discord.py>=2.4,<3",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8,<9",
+]
+
+[project.scripts]
+fastdl-upload-bot = "fastdl_upload_bot.main:main"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]

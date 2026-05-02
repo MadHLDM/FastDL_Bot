@@ -1,0 +1,29 @@
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.pytest-tmp/
+.pytest-tmp-*/
+.venv/
+venv/
+dist/
+build/
+*.egg-info/
+.env
+.env.*
+!.env.example
+
+# Real instance configuration. Copy config.example.json to config.json locally.
+config.json
+config.local.json
+config.production.json
+*.secret.json
+
+# Local runtime data.
+logs/
+.incoming/
+.backups/
+.verify-tmp/
+.verify-tmp-*/
+.verify-*/
+local-server-test/
+local-fastdl-test/

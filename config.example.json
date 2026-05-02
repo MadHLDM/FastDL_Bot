@@ -1,0 +1,102 @@
+{
+  "discord": {
+    "token": "",
+    "guild_ids": [],
+    "audit_channel_id": null,
+    "command_name": "upload_fastdl",
+    "validate_command_name": "validate_fastdl",
+    "enable_message_uploads": false
+  },
+  "storage": {
+    "backend": "local",
+    "root_path": "./local-server-test",
+    "fastdl_root_path": null,
+    "allow_overwrite": false,
+    "backup_existing": true,
+    "compressed_formats": []
+  },
+  "content_types": {
+    "map": {
+      "allowed_channel_ids": [],
+      "allowed_role_ids": [],
+      "max_compressed_bytes": 104857600,
+      "max_uncompressed_bytes": 536870912,
+      "max_file_bytes": 268435456,
+      "max_file_count": 2000,
+      "max_depth": 8,
+      "require_lowercase_paths": true,
+      "required_extensions": [".bsp"],
+      "path_rules": [
+        { "prefix": "", "extensions": [".wad"] },
+        { "prefix": "maps", "extensions": [".bsp", ".cfg", ".res", ".txt", ".nav"] },
+        { "prefix": "models", "extensions": [".mdl", ".bmp"] },
+        { "prefix": "scripts/maps", "extensions": [".as", ".inc"] },
+        { "prefix": "sound", "extensions": [".wav", ".mp3", ".ogg", ".txt"] },
+        { "prefix": "sprites", "extensions": [".spr", ".tga", ".txt"] },
+        { "prefix": "gfx", "extensions": [".tga", ".bmp"] },
+        { "prefix": "overviews", "extensions": [".bmp", ".txt"] },
+        { "prefix": "materials", "extensions": [".vmt", ".vtf", ".raw", ".svg"] },
+        { "prefix": "resource", "extensions": [".txt", ".res"] },
+        { "prefix": "particles", "extensions": [".pcf"] }
+      ]
+    },
+    "playermodel": {
+      "allowed_channel_ids": [],
+      "allowed_role_ids": [],
+      "max_compressed_bytes": 52428800,
+      "max_uncompressed_bytes": 209715200,
+      "max_file_bytes": 104857600,
+      "max_file_count": 500,
+      "max_depth": 8,
+      "require_lowercase_paths": true,
+      "required_extensions": [".mdl"],
+      "path_rules": [
+        { "prefix": "models/player", "extensions": [".mdl", ".bmp"] },
+        { "prefix": "models", "extensions": [".mdl", ".bmp"] },
+        { "prefix": "sound", "extensions": [".wav", ".mp3", ".ogg", ".txt"] }
+      ]
+    },
+    "sounds": {
+      "allowed_channel_ids": [],
+      "allowed_role_ids": [],
+      "max_compressed_bytes": 52428800,
+      "max_uncompressed_bytes": 209715200,
+      "max_file_bytes": 52428800,
+      "max_file_count": 1000,
+      "max_depth": 8,
+      "require_lowercase_paths": true,
+      "required_any_extensions": [".wav", ".mp3", ".ogg"],
+      "path_rules": [
+        { "prefix": "sound", "extensions": [".wav", ".mp3", ".ogg", ".txt"] }
+      ]
+    },
+    "sprites": {
+      "allowed_channel_ids": [],
+      "allowed_role_ids": [],
+      "max_compressed_bytes": 52428800,
+      "max_uncompressed_bytes": 209715200,
+      "max_file_bytes": 52428800,
+      "max_file_count": 1000,
+      "max_depth": 8,
+      "require_lowercase_paths": true,
+      "required_extensions": [".spr"],
+      "path_rules": [
+        { "prefix": "sprites", "extensions": [".spr", ".tga", ".txt"] }
+      ]
+    },
+    "angelscript_map": {
+      "allowed_channel_ids": [],
+      "allowed_role_ids": [],
+      "max_compressed_bytes": 10485760,
+      "max_uncompressed_bytes": 52428800,
+      "max_file_bytes": 5242880,
+      "max_file_count": 100,
+      "max_depth": 6,
+      "require_lowercase_paths": true,
+      "required_extensions": [".as"],
+      "path_rules": [
+        { "prefix": "scripts/maps", "extensions": [".as", ".inc"] }
+      ]
+    }
+  }
+}
