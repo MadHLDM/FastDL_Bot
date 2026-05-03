@@ -23,6 +23,7 @@ config.production.json
 logs/
 .incoming/
 .backups/
+.pending/
 .uploads/
 .fastdl-upload.lock
 .verify-tmp/

@@ -1,6 +1,6 @@
 [project]
 name = "sven-fastdl-upload-bot"
-version = "0.1.0"
+version = "1.0.0"
 description = "Discord upload bot for Sven Co-op FastDL packages."
 readme = "README.md"
 requires-python = ">=3.11"

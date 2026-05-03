@@ -8,6 +8,8 @@ The bot runs outside the game. AngelScript support is handled through package ru
 
 - Slash command `/upload_fastdl content_type zip_file`.
 - Slash command `/validate_fastdl content_type zip_file` to validate without installing.
+- Optional admin approval queue before installation.
+- Admin slash commands to list pending uploads, approve/reject them, inspect manifests, and roll back uploads.
 - Optional message attachment uploads in channels mapped to one content type.
 - Per-content role and channel validation.
 - `.zip` uploads only.
@@ -47,6 +49,8 @@ Use `.env` for instance-specific values:
 - `FASTDL_DISCORD_TOKEN`: bot token.
 - `FASTDL_DISCORD_GUILD_IDS`: comma-separated guild IDs.
 - `FASTDL_DISCORD_AUDIT_CHANNEL_ID`: audit channel ID.
+- `FASTDL_APPROVAL_REQUIRED`: validate uploads and hold them for admin approval instead of installing immediately.
+- `FASTDL_ADMIN_ROLE_IDS`: comma-separated role IDs allowed to use admin review and rollback commands. Discord administrators also qualify. Users with Manage Server can inspect pending uploads and manifests, but cannot approve, reject, or roll back without one of these roles.
 - `FASTDL_REQUIRE_ACCESS_RULES`: require every content type to define channel and role rules. Keep this `true` for public servers.
 - `FASTDL_ATTACHMENT_DOWNLOAD_TIMEOUT_SECONDS`: timeout for downloading a Discord attachment.
 - `FASTDL_RATE_LIMIT_MAX_REQUESTS`: max upload/validate requests per user per window. Set `0` to disable.
@@ -93,7 +97,7 @@ Sound/MyMap/Ambience.wav
 
 Before publishing a fork or mirror, verify:
 
-- no `config.json`, `.env`, real logs, or local backups are tracked;
+- no `config.json`, `.env`, real logs, pending uploads, manifests, or local backups are tracked;
 - `config.example.json` contains placeholders only;
 - the bot token never appears in issues, screenshots, public logs, stack traces, or commits;
 - `storage.root_path` points to a dedicated folder with minimal write permissions;
@@ -108,6 +112,12 @@ Validate configuration without starting Discord:
 
 ```powershell
 python -m fastdl_upload_bot.main --config config.json config check
+```
+
+Dry-run a local package without installing:
+
+```powershell
+python -m fastdl_upload_bot.main --config config.json validate path\to\package.zip --content-type map
 ```
 
 ```powershell
@@ -140,6 +150,43 @@ To validate a package without installing:
 
 ```text
 /validate_fastdl content_type: map zip_file: test.zip
+```
+
+The validation response includes the file count, uncompressed size, top folders, extensions, largest files, compressed files that would be generated, and destination conflicts.
+
+## Admin Approval and Discord Operations
+
+Set `approval_required` to `true` in `config.json`, or set this in `.env`:
+
+```dotenv
+FASTDL_APPROVAL_REQUIRED=true
+FASTDL_ADMIN_ROLE_IDS=111111111111111111,222222222222222222
+```
+
+With approval enabled, `/upload_fastdl` validates and stages the package under `.pending/` instead of installing it. The pending manifest records SHA-256 hashes for every staged file; approval refuses to install if staged content changed, disappeared, or gained extra files. Admins can then use:
+
+```text
+/fastdl_pending
+/fastdl_approve pending_id: 20260503T210000Z-abc123def0
+/fastdl_reject pending_id: 20260503T210000Z-abc123def0 reason: wrong package
+```
+
+Admin commands also expose manifest history and rollback:
+
+```text
+/fastdl_uploads
+/fastdl_uploads upload_id: 20260501T232531Z-1fdcb5d14b
+/fastdl_rollback upload_id: 20260501T232531Z-1fdcb5d14b force: true
+```
+
+Rollback uses the same manifest hash checks as the CLI recovery path and refuses to delete modified installed files.
+
+Pending uploads can also be inspected and cleaned up from the CLI:
+
+```powershell
+python -m fastdl_upload_bot.main --config config.json pending list
+python -m fastdl_upload_bot.main --config config.json pending show 20260503T210000Z-abc123def0
+python -m fastdl_upload_bot.main --config config.json pending prune --older-than-days 7
 ```
 
 ## Upload Manifests and Recovery

@@ -33,6 +33,8 @@ def _base_config(tmp_path: Path) -> dict[str, object]:
 def _clear_fastdl_env(monkeypatch: pytest.MonkeyPatch) -> None:
 	for key in (
 		"FASTDL_REQUIRE_ACCESS_RULES",
+		"FASTDL_APPROVAL_REQUIRED",
+		"FASTDL_ADMIN_ROLE_IDS",
 		"FASTDL_SERVER_ROOT_PATH",
 		"FASTDL_FASTDL_ROOT_PATH",
 		"FASTDL_MAP_CHANNEL_IDS",
@@ -86,3 +88,19 @@ def test_config_accepts_required_channel_and_role_rules(
 
 	assert config.content_types["map"].allowed_channel_ids == (123,)
 	assert config.content_types["map"].allowed_role_ids == (456,)
+
+
+def test_config_loads_approval_settings(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+	monkeypatch.chdir(tmp_path)
+	_clear_fastdl_env(monkeypatch)
+	data = _base_config(tmp_path)
+	data["discord"]["require_access_rules"] = False
+	data["discord"]["approval_required"] = True
+	data["discord"]["admin_role_ids"] = [777]
+	config_path = tmp_path / "config.json"
+	config_path.write_text(json.dumps(data), encoding="utf-8")
+
+	config = load_config(config_path)
+
+	assert config.discord.approval_required is True
+	assert config.discord.admin_role_ids == (777,)

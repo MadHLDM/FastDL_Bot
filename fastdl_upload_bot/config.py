@@ -14,7 +14,14 @@ class DiscordConfig:
     audit_channel_id: int | None = None
     command_name: str = "upload_fastdl"
     validate_command_name: str = "validate_fastdl"
+    pending_command_name: str = "fastdl_pending"
+    approve_command_name: str = "fastdl_approve"
+    reject_command_name: str = "fastdl_reject"
+    uploads_command_name: str = "fastdl_uploads"
+    rollback_command_name: str = "fastdl_rollback"
     enable_message_uploads: bool = False
+    approval_required: bool = False
+    admin_role_ids: tuple[int, ...] = ()
     require_access_rules: bool = True
     attachment_download_timeout_seconds: int = 120
     rate_limit_max_requests: int = 3
@@ -126,7 +133,14 @@ def load_config(path: str | Path) -> AppConfig:
             "audit_channel_id": ("FASTDL_DISCORD_AUDIT_CHANNEL_ID", parse_optional_int),
             "command_name": ("FASTDL_DISCORD_COMMAND_NAME", str),
             "validate_command_name": ("FASTDL_DISCORD_VALIDATE_COMMAND_NAME", str),
+            "pending_command_name": ("FASTDL_DISCORD_PENDING_COMMAND_NAME", str),
+            "approve_command_name": ("FASTDL_DISCORD_APPROVE_COMMAND_NAME", str),
+            "reject_command_name": ("FASTDL_DISCORD_REJECT_COMMAND_NAME", str),
+            "uploads_command_name": ("FASTDL_DISCORD_UPLOADS_COMMAND_NAME", str),
+            "rollback_command_name": ("FASTDL_DISCORD_ROLLBACK_COMMAND_NAME", str),
             "enable_message_uploads": ("FASTDL_ENABLE_MESSAGE_UPLOADS", parse_bool),
+            "approval_required": ("FASTDL_APPROVAL_REQUIRED", parse_bool),
+            "admin_role_ids": ("FASTDL_ADMIN_ROLE_IDS", parse_int_tuple),
             "require_access_rules": ("FASTDL_REQUIRE_ACCESS_RULES", parse_bool),
             "attachment_download_timeout_seconds": ("FASTDL_ATTACHMENT_DOWNLOAD_TIMEOUT_SECONDS", int),
             "rate_limit_max_requests": ("FASTDL_RATE_LIMIT_MAX_REQUESTS", int),
@@ -156,7 +170,14 @@ def load_config(path: str | Path) -> AppConfig:
         ),
         command_name=str(discord_data.get("command_name", "upload_fastdl")),
         validate_command_name=str(discord_data.get("validate_command_name", "validate_fastdl")),
+        pending_command_name=str(discord_data.get("pending_command_name", "fastdl_pending")),
+        approve_command_name=str(discord_data.get("approve_command_name", "fastdl_approve")),
+        reject_command_name=str(discord_data.get("reject_command_name", "fastdl_reject")),
+        uploads_command_name=str(discord_data.get("uploads_command_name", "fastdl_uploads")),
+        rollback_command_name=str(discord_data.get("rollback_command_name", "fastdl_rollback")),
         enable_message_uploads=bool(discord_data.get("enable_message_uploads", False)),
+        approval_required=bool(discord_data.get("approval_required", False)),
+        admin_role_ids=tuple(int(v) for v in discord_data.get("admin_role_ids", [])),
         require_access_rules=bool(discord_data.get("require_access_rules", True)),
         attachment_download_timeout_seconds=int(
             discord_data.get("attachment_download_timeout_seconds", 120)

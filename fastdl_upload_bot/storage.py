@@ -15,7 +15,7 @@ from uuid import uuid4
 
 from .config import StorageConfig
 
-INTERNAL_ROOTS = {".incoming", ".backups", ".uploads"}
+INTERNAL_ROOTS = {".incoming", ".backups", ".pending", ".uploads"}
 LOCK_POLL_SECONDS = 0.1
 
 
@@ -37,8 +37,10 @@ class LocalStorage:
             self.fastdl_root.mkdir(parents=True, exist_ok=True)
         self.incoming_root = self.root / ".incoming"
         self.backup_root = self.root / ".backups"
+        self.pending_root = self.root / ".pending"
         self.uploads_root = self.root / ".uploads"
         self.incoming_root.mkdir(exist_ok=True)
+        self.pending_root.mkdir(exist_ok=True)
         self.uploads_root.mkdir(exist_ok=True)
         if self.config.backup_existing:
             self.backup_root.mkdir(exist_ok=True)

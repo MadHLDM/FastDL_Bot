@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from pathlib import Path
+import shutil
 
 import discord
 from discord import app_commands
@@ -10,8 +11,19 @@ from discord import app_commands
 from .audit import AuditRecord, append_audit_log, sha256_file
 from .config import AppConfig, ContentTypeConfig
 from .extractor import extract_validated_zip
+from .pending import (
+    create_pending_upload,
+    delete_pending_upload,
+    list_pending_uploads,
+    pending_content_dir,
+    pending_summary,
+    read_pending_upload,
+    verify_pending_integrity,
+)
 from .rate_limit import RateLimiter
+from .reports import preview_install, validation_summary
 from .storage import LocalStorage
+from .uploads import list_upload_manifests, read_upload_manifest, recover_upload
 from .validator import ValidationError, validate_zip_file
 
 LOGGER = logging.getLogger(__name__)
@@ -78,6 +90,11 @@ class FastDLUploadBot(discord.Client):
     def _register_commands(self) -> None:
         command_name = self.config.discord.command_name
         validate_command_name = self.config.discord.validate_command_name
+        pending_command_name = self.config.discord.pending_command_name
+        approve_command_name = self.config.discord.approve_command_name
+        reject_command_name = self.config.discord.reject_command_name
+        uploads_command_name = self.config.discord.uploads_command_name
+        rollback_command_name = self.config.discord.rollback_command_name
 
         @self.tree.command(name=command_name, description="Install a validated zip into FastDL")
         @app_commands.describe(
@@ -123,6 +140,195 @@ class FastDLUploadBot(discord.Client):
                 content_type_name=content_type,
                 attachment=zip_file,
                 reply=reply_text,
+            )
+
+        @self.tree.command(name=pending_command_name, description="List pending FastDL uploads")
+        async def fastdl_pending(interaction: discord.Interaction) -> None:
+            await interaction.response.defer(ephemeral=True, thinking=True)
+            if not self._is_admin(interaction.user):
+                await self._audit_admin_denied(interaction, pending_command_name)
+                await interaction.followup.send("Only FastDL admins can inspect pending uploads.", ephemeral=True)
+                return
+            pending = list_pending_uploads(self.storage)
+            if not pending:
+                await interaction.followup.send("No pending uploads.", ephemeral=True)
+                return
+            lines = ["Pending uploads:"]
+            for item in pending[:10]:
+                conflict_note = " conflicts" if item.conflicts else ""
+                lines.append(
+                    f"- `{item.pending_id}` `{item.content_type}` "
+                    f"{len(item.files)} file(s){conflict_note} by `{item.user_name}`"
+                )
+            if len(pending) > 10:
+                lines.append(f"- ... +{len(pending) - 10} pending uploads")
+            await interaction.followup.send("\n".join(lines), ephemeral=True)
+
+        @self.tree.command(name=approve_command_name, description="Approve and install a pending FastDL upload")
+        async def fastdl_approve(interaction: discord.Interaction, pending_id: str) -> None:
+            await interaction.response.defer(ephemeral=True, thinking=True)
+            if not self._is_destructive_admin(interaction.user):
+                await self._audit_admin_denied(interaction, approve_command_name)
+                await interaction.followup.send("Only FastDL admins can approve uploads.", ephemeral=True)
+                return
+            try:
+                pending = read_pending_upload(self.storage, pending_id)
+                verify_pending_integrity(self.storage, pending)
+                content_dir = pending_content_dir(self.storage, pending_id)
+                approval_dir = self.storage.create_staging_dir()
+                try:
+                    await asyncio.to_thread(shutil.copytree, content_dir, approval_dir, dirs_exist_ok=True)
+                    async with self._install_lock:
+                        install_result = await asyncio.to_thread(self.storage.install, approval_dir)
+                finally:
+                    self.storage.cleanup_staging_dir(approval_dir)
+            except (FileNotFoundError, RuntimeError, ValueError, FileExistsError) as exc:
+                await interaction.followup.send(f"Approval failed: {exc}", ephemeral=True)
+                return
+            delete_pending_upload(self.storage, pending_id)
+            installed_relative = tuple(
+                self.storage.display_path(path)
+                for path in install_result.installed_files
+            )
+            compressed_relative = tuple(
+                self.storage.display_path(path)
+                for path in install_result.compressed_files
+            )
+            record = AuditRecord(
+                status="accepted",
+                user_id=pending.user_id,
+                user_name=pending.user_name,
+                channel_id=pending.channel_id,
+                content_type=pending.content_type,
+                filename=pending.filename,
+                sha256=pending.sha256,
+                upload_id=install_result.upload_id,
+                message=f"approved by {interaction.user}; {len(installed_relative)} file(s) installed",
+                files=(*installed_relative, *compressed_relative),
+            )
+            append_audit_log(record)
+            await self._send_audit(record)
+            await interaction.followup.send(
+                f"Approved `{pending_id}`.\n"
+                f"Upload ID: `{install_result.upload_id}`\n"
+                f"Installed files: `{len(installed_relative)}`",
+                ephemeral=True,
+            )
+
+        @self.tree.command(name=reject_command_name, description="Reject and remove a pending FastDL upload")
+        async def fastdl_reject(
+            interaction: discord.Interaction,
+            pending_id: str,
+            reason: str = "rejected by admin",
+        ) -> None:
+            await interaction.response.defer(ephemeral=True, thinking=True)
+            if not self._is_destructive_admin(interaction.user):
+                await self._audit_admin_denied(interaction, reject_command_name)
+                await interaction.followup.send("Only FastDL admins can reject uploads.", ephemeral=True)
+                return
+            try:
+                pending = read_pending_upload(self.storage, pending_id)
+                delete_pending_upload(self.storage, pending_id)
+            except (FileNotFoundError, RuntimeError, ValueError) as exc:
+                await interaction.followup.send(f"Reject failed: {exc}", ephemeral=True)
+                return
+            record = AuditRecord(
+                status="rejected",
+                user_id=pending.user_id,
+                user_name=pending.user_name,
+                channel_id=pending.channel_id,
+                content_type=pending.content_type,
+                filename=pending.filename,
+                sha256=pending.sha256,
+                message=f"{reason} ({interaction.user})",
+                files=pending.files,
+            )
+            append_audit_log(record)
+            await self._send_audit(record)
+            await interaction.followup.send(f"Rejected `{pending_id}`.", ephemeral=True)
+
+        @self.tree.command(name=uploads_command_name, description="List or inspect FastDL upload manifests")
+        async def fastdl_uploads(
+            interaction: discord.Interaction,
+            upload_id: str = "",
+        ) -> None:
+            await interaction.response.defer(ephemeral=True, thinking=True)
+            if not self._is_admin(interaction.user):
+                await self._audit_admin_denied(interaction, uploads_command_name)
+                await interaction.followup.send("Only FastDL admins can inspect upload manifests.", ephemeral=True)
+                return
+            try:
+                if upload_id:
+                    manifest = read_upload_manifest(self.storage, upload_id)
+                    lines = [
+                        f"Upload ID: `{manifest.get('upload_id', upload_id)}`",
+                        f"Status: `{manifest.get('status', '')}`",
+                        f"Started: `{manifest.get('started_at', '')}`",
+                        f"Completed: `{manifest.get('completed_at', '')}`",
+                        f"Installed files: `{len(manifest.get('installed_files', ()))}`",
+                        f"Compressed files: `{len(manifest.get('compressed_files', ()))}`",
+                    ]
+                    await interaction.followup.send("\n".join(lines), ephemeral=True)
+                    return
+                manifests = list_upload_manifests(self.storage)
+            except (FileNotFoundError, RuntimeError, ValueError) as exc:
+                await interaction.followup.send(f"Manifest lookup failed: {exc}", ephemeral=True)
+                return
+            if not manifests:
+                await interaction.followup.send("No upload manifests.", ephemeral=True)
+                return
+            lines = ["Recent uploads:"]
+            for manifest in manifests[-10:]:
+                lines.append(
+                    f"- `{manifest.get('upload_id', '')}` `{manifest.get('status', '')}` "
+                    f"{manifest.get('completed_at') or manifest.get('started_at') or ''}"
+                )
+            await interaction.followup.send("\n".join(lines), ephemeral=True)
+
+        @self.tree.command(name=rollback_command_name, description="Roll back files from an upload manifest")
+        async def fastdl_rollback(
+            interaction: discord.Interaction,
+            upload_id: str,
+            force: bool = False,
+        ) -> None:
+            await interaction.response.defer(ephemeral=True, thinking=True)
+            if not self._is_destructive_admin(interaction.user):
+                await self._audit_admin_denied(interaction, rollback_command_name)
+                await interaction.followup.send("Only FastDL admins can roll back uploads.", ephemeral=True)
+                return
+            try:
+                result = await asyncio.to_thread(recover_upload, self.storage, upload_id, force=force)
+            except (FileNotFoundError, RuntimeError, ValueError) as exc:
+                message = str(exc)
+                if "without --force" in message:
+                    message = (
+                        f"{message}\n"
+                        "Set `force: true` on `/fastdl_rollback` to intentionally roll back an installed upload."
+                    )
+                await interaction.followup.send(f"Rollback failed: {message}", ephemeral=True)
+                return
+            record = AuditRecord(
+                status="rolled_back",
+                user_id=interaction.user.id,
+                user_name=str(interaction.user),
+                channel_id=interaction.channel_id or 0,
+                content_type="upload_manifest",
+                filename=upload_id,
+                sha256="not-downloaded",
+                message=(
+                    f"deleted={len(result.deleted_files)} "
+                    f"restored={len(result.restored_files)}"
+                ),
+                files=(*result.deleted_files, *result.restored_files),
+                upload_id=upload_id,
+            )
+            append_audit_log(record)
+            await self._send_audit(record)
+            await interaction.followup.send(
+                f"Rollback `{upload_id}`: `{result.status}`\n"
+                f"Deleted: `{len(result.deleted_files)}`\n"
+                f"Restored: `{len(result.restored_files)}`",
+                ephemeral=True,
             )
 
     async def _handle_upload(
@@ -192,6 +398,39 @@ class FastDLUploadBot(discord.Client):
                     staging_dir,
                     validation.entries,
                 )
+                preview = await asyncio.to_thread(preview_install, self.storage, staging_dir)
+                if self.config.discord.approval_required:
+                    pending = await asyncio.to_thread(
+                        create_pending_upload,
+                        self.storage,
+                        staging_dir,
+                        content_type=content_type.name,
+                        filename=attachment.filename,
+                        sha256=digest,
+                        user_id=actor.id,
+                        user_name=str(actor),
+                        channel_id=channel_id,
+                        preview=preview,
+                    )
+                    record = AuditRecord(
+                        status="pending",
+                        user_id=actor.id,
+                        user_name=str(actor),
+                        channel_id=channel_id,
+                        content_type=content_type.name,
+                        filename=attachment.filename,
+                        sha256=digest,
+                        message=f"waiting for admin approval: {pending.pending_id}",
+                        files=pending.files,
+                    )
+                    append_audit_log(record)
+                    await self._send_audit(record)
+                    await reply(
+                        f"Upload validated and queued for admin approval.\n"
+                        f"{pending_summary(pending)}",
+                        ephemeral=True,
+                    )
+                    return
                 async with self._install_lock:
                     install_result = await asyncio.to_thread(self.storage.install, staging_dir)
                 installed_relative = tuple(
@@ -331,6 +570,17 @@ class FastDLUploadBot(discord.Client):
                     content_type,
                     (self.storage.root,),
                 )
+                staging_dir = self.storage.create_staging_dir()
+                try:
+                    await asyncio.to_thread(
+                        extract_validated_zip,
+                        str(zip_path),
+                        staging_dir,
+                        validation.entries,
+                    )
+                    preview = await asyncio.to_thread(preview_install, self.storage, staging_dir)
+                finally:
+                    self.storage.cleanup_staging_dir(staging_dir)
             except ValidationError as exc:
                 await self._reject(
                     actor,
@@ -363,15 +613,9 @@ class FastDLUploadBot(discord.Client):
         append_audit_log(record)
         await self._send_audit(record)
 
-        shown = "\n".join(f"- `{path}`" for path in validated_files[:20])
-        extra = ""
-        if len(validated_files) > 20:
-            extra = f"\n- ... +{len(validated_files) - 20} files"
         await reply(
             f"Zip is valid for `{content_type.name}`. Nothing was installed.\n"
-            f"Files: `{len(validated_files)}`\n"
-            f"Uncompressed size: `{validation.total_uncompressed_bytes}` bytes\n"
-            f"Validated content:\n{shown}{extra}",
+            f"{validation_summary(validation, preview)}",
             ephemeral=True,
         )
 
@@ -390,6 +634,45 @@ class FastDLUploadBot(discord.Client):
         if not role_ids.intersection(content_type.allowed_role_ids):
             return "user does not have an authorized role"
         return None
+
+    def _is_admin(self, actor: discord.abc.User) -> bool:
+        permissions = getattr(actor, "guild_permissions", None)
+        if permissions and (
+            getattr(permissions, "administrator", False)
+            or getattr(permissions, "manage_guild", False)
+        ):
+            return True
+        if not self.config.discord.admin_role_ids:
+            return False
+        role_ids = {role.id for role in getattr(actor, "roles", [])}
+        return bool(role_ids.intersection(self.config.discord.admin_role_ids))
+
+    def _is_destructive_admin(self, actor: discord.abc.User) -> bool:
+        permissions = getattr(actor, "guild_permissions", None)
+        if permissions and getattr(permissions, "administrator", False):
+            return True
+        if not self.config.discord.admin_role_ids:
+            return False
+        role_ids = {role.id for role in getattr(actor, "roles", [])}
+        return bool(role_ids.intersection(self.config.discord.admin_role_ids))
+
+    async def _audit_admin_denied(
+        self,
+        interaction: discord.Interaction,
+        command_name: str,
+    ) -> None:
+        record = AuditRecord(
+            status="admin_denied",
+            user_id=interaction.user.id,
+            user_name=str(interaction.user),
+            channel_id=interaction.channel_id or 0,
+            content_type="admin_command",
+            filename=command_name,
+            sha256="not-downloaded",
+            message="admin command denied",
+        )
+        append_audit_log(record)
+        await self._send_audit(record)
 
     async def _rate_limit_reject(
         self,
