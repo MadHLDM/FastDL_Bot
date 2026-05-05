@@ -29,6 +29,21 @@ class DiscordConfig:
 
 
 @dataclass(frozen=True)
+class SftpPublishConfig:
+	enabled: bool = False
+	host: str | None = None
+	port: int = 22
+	username: str | None = None
+	password: str | None = None
+	private_key_path: Path | None = None
+	private_key_passphrase: str | None = None
+	remote_fastdl_root_path: str | None = None
+	known_hosts_path: Path | None = None
+	strict_host_key_checking: bool = True
+	connect_timeout_seconds: int = 30
+
+
+@dataclass(frozen=True)
 class StorageConfig:
     backend: str
     root_path: Path
@@ -37,6 +52,7 @@ class StorageConfig:
     backup_existing: bool = True
     compressed_formats: tuple[str, ...] = ()
     install_lock_timeout_seconds: int = 300
+    sftp: SftpPublishConfig = field(default_factory=SftpPublishConfig)
 
 
 @dataclass(frozen=True)
@@ -150,12 +166,34 @@ def load_config(path: str | Path) -> AppConfig:
     storage_data = _apply_env_overrides(
         raw_storage_data,
         {
+            "backend": ("FASTDL_STORAGE_BACKEND", str),
             "root_path": ("FASTDL_SERVER_ROOT_PATH", str),
             "fastdl_root_path": ("FASTDL_FASTDL_ROOT_PATH", parse_optional_str),
             "allow_overwrite": ("FASTDL_ALLOW_OVERWRITE", parse_bool),
             "backup_existing": ("FASTDL_BACKUP_EXISTING", parse_bool),
             "compressed_formats": ("FASTDL_COMPRESSED_FORMATS", parse_str_tuple),
             "install_lock_timeout_seconds": ("FASTDL_INSTALL_LOCK_TIMEOUT_SECONDS", int),
+        },
+    )
+    raw_sftp_data = raw_storage_data.get("sftp", {})
+    if raw_sftp_data is None:
+        raw_sftp_data = {}
+    if not isinstance(raw_sftp_data, dict):
+        raise ValueError("storage.sftp must be an object when configured")
+    sftp_data = _apply_env_overrides(
+        raw_sftp_data,
+        {
+            "enabled": ("FASTDL_SFTP_ENABLED", parse_bool),
+            "host": ("FASTDL_SFTP_HOST", parse_optional_str),
+            "port": ("FASTDL_SFTP_PORT", int),
+            "username": ("FASTDL_SFTP_USERNAME", parse_optional_str),
+            "password": ("FASTDL_SFTP_PASSWORD", parse_optional_str),
+            "private_key_path": ("FASTDL_SFTP_PRIVATE_KEY_PATH", parse_optional_str),
+            "private_key_passphrase": ("FASTDL_SFTP_PRIVATE_KEY_PASSPHRASE", parse_optional_str),
+            "remote_fastdl_root_path": ("FASTDL_SFTP_REMOTE_FASTDL_ROOT_PATH", parse_optional_str),
+            "known_hosts_path": ("FASTDL_SFTP_KNOWN_HOSTS_PATH", parse_optional_str),
+            "strict_host_key_checking": ("FASTDL_SFTP_STRICT_HOST_KEY_CHECKING", parse_bool),
+            "connect_timeout_seconds": ("FASTDL_SFTP_CONNECT_TIMEOUT_SECONDS", int),
         },
     )
     content_data = _content_types_with_env_overrides(data.get("content_types", {}))
@@ -186,6 +224,28 @@ def load_config(path: str | Path) -> AppConfig:
         rate_limit_window_seconds=int(discord_data.get("rate_limit_window_seconds", 60)),
     )
 
+    sftp = SftpPublishConfig(
+        enabled=bool(sftp_data.get("enabled", False)),
+        host=optional_str(sftp_data.get("host")),
+        port=int(sftp_data.get("port", 22)),
+        username=optional_str(sftp_data.get("username")),
+        password=optional_str(sftp_data.get("password")),
+        private_key_path=(
+            Path(str(sftp_data["private_key_path"])).expanduser().resolve()
+            if sftp_data.get("private_key_path")
+            else None
+        ),
+        private_key_passphrase=optional_str(sftp_data.get("private_key_passphrase")),
+        remote_fastdl_root_path=optional_str(sftp_data.get("remote_fastdl_root_path")),
+        known_hosts_path=(
+            Path(str(sftp_data["known_hosts_path"])).expanduser().resolve()
+            if sftp_data.get("known_hosts_path")
+            else None
+        ),
+        strict_host_key_checking=bool(sftp_data.get("strict_host_key_checking", True)),
+        connect_timeout_seconds=int(sftp_data.get("connect_timeout_seconds", 30)),
+    )
+
     storage = StorageConfig(
         backend=str(storage_data.get("backend", "local")),
         root_path=Path(str(storage_data["root_path"])).expanduser().resolve(),
@@ -201,10 +261,10 @@ def load_config(path: str | Path) -> AppConfig:
             for value in storage_data.get("compressed_formats", [])
         ),
         install_lock_timeout_seconds=int(storage_data.get("install_lock_timeout_seconds", 300)),
+        sftp=sftp,
     )
 
-    if storage.backend != "local":
-        raise ValueError("only the local storage backend is implemented in this version")
+    _validate_storage_config(storage)
 
     content_types = {
         name: ContentTypeConfig.from_dict(name, value)
@@ -216,6 +276,27 @@ def load_config(path: str | Path) -> AppConfig:
         _validate_access_rules(content_types)
 
     return AppConfig(discord=discord, storage=storage, content_types=content_types)
+
+
+def _validate_storage_config(storage: StorageConfig) -> None:
+	if storage.backend != "local":
+		raise ValueError("only the local storage backend is implemented in this version")
+	if not storage.sftp.enabled:
+		return
+	missing: list[str] = []
+	if not storage.sftp.host:
+		missing.append("host")
+	if not storage.sftp.username:
+		missing.append("username")
+	if not storage.sftp.remote_fastdl_root_path:
+		missing.append("remote_fastdl_root_path")
+	if missing:
+		joined = ", ".join(missing)
+		raise ValueError(f"SFTP publishing is enabled but missing required fields: {joined}")
+	if storage.sftp.port <= 0:
+		raise ValueError("SFTP port must be greater than zero")
+	if storage.sftp.connect_timeout_seconds <= 0:
+		raise ValueError("SFTP connect timeout must be greater than zero")
 
 
 def _validate_access_rules(content_types: dict[str, ContentTypeConfig]) -> None:
@@ -283,6 +364,14 @@ def parse_optional_str(value: str) -> str | None:
     if not stripped or stripped.lower() in {"null", "none"}:
         return None
     return stripped
+
+
+def optional_str(value: object) -> str | None:
+	if value is None:
+		return None
+	if isinstance(value, str):
+		return parse_optional_str(value)
+	return str(value)
 
 
 def parse_optional_int(value: str) -> int | None:

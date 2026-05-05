@@ -37,6 +37,17 @@ def _clear_fastdl_env(monkeypatch: pytest.MonkeyPatch) -> None:
 		"FASTDL_ADMIN_ROLE_IDS",
 		"FASTDL_SERVER_ROOT_PATH",
 		"FASTDL_FASTDL_ROOT_PATH",
+		"FASTDL_SFTP_ENABLED",
+		"FASTDL_SFTP_HOST",
+		"FASTDL_SFTP_PORT",
+		"FASTDL_SFTP_USERNAME",
+		"FASTDL_SFTP_PASSWORD",
+		"FASTDL_SFTP_PRIVATE_KEY_PATH",
+		"FASTDL_SFTP_PRIVATE_KEY_PASSPHRASE",
+		"FASTDL_SFTP_REMOTE_FASTDL_ROOT_PATH",
+		"FASTDL_SFTP_KNOWN_HOSTS_PATH",
+		"FASTDL_SFTP_STRICT_HOST_KEY_CHECKING",
+		"FASTDL_SFTP_CONNECT_TIMEOUT_SECONDS",
 		"FASTDL_MAP_CHANNEL_IDS",
 		"FASTDL_MAP_ROLE_IDS",
 	):
@@ -104,3 +115,45 @@ def test_config_loads_approval_settings(tmp_path: Path, monkeypatch: pytest.Monk
 
 	assert config.discord.approval_required is True
 	assert config.discord.admin_role_ids == (777,)
+
+
+def test_config_loads_sftp_publish_settings(
+	tmp_path: Path,
+	monkeypatch: pytest.MonkeyPatch,
+) -> None:
+	monkeypatch.chdir(tmp_path)
+	_clear_fastdl_env(monkeypatch)
+	data = _base_config(tmp_path)
+	data["discord"]["require_access_rules"] = False
+	data["storage"]["sftp"] = {
+		"enabled": True,
+		"host": "fastdl.example.com",
+		"username": "fastdl-bot",
+		"private_key_path": str(tmp_path / "id_ed25519"),
+		"remote_fastdl_root_path": "/var/www/fastdl/svencoop",
+	}
+	config_path = tmp_path / "config.json"
+	config_path.write_text(json.dumps(data), encoding="utf-8")
+
+	config = load_config(config_path)
+
+	assert config.storage.sftp.enabled is True
+	assert config.storage.sftp.host == "fastdl.example.com"
+	assert config.storage.sftp.username == "fastdl-bot"
+	assert config.storage.sftp.remote_fastdl_root_path == "/var/www/fastdl/svencoop"
+
+
+def test_config_requires_sftp_target_when_enabled(
+	tmp_path: Path,
+	monkeypatch: pytest.MonkeyPatch,
+) -> None:
+	monkeypatch.chdir(tmp_path)
+	_clear_fastdl_env(monkeypatch)
+	data = _base_config(tmp_path)
+	data["discord"]["require_access_rules"] = False
+	data["storage"]["sftp"] = {"enabled": True}
+	config_path = tmp_path / "config.json"
+	config_path.write_text(json.dumps(data), encoding="utf-8")
+
+	with pytest.raises(ValueError, match="SFTP publishing is enabled"):
+		load_config(config_path)
