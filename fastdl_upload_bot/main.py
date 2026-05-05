@@ -15,6 +15,7 @@ from .pending import (
 )
 from .reports import preview_install, validation_summary
 from .storage import LocalStorage
+from .sftp_publisher import SftpPublisher
 from .uploads import (
 	clear_install_lock,
 	list_upload_manifests,
@@ -100,6 +101,10 @@ def main() -> None:
 			print(f"attachment_download_timeout_seconds: {config.discord.attachment_download_timeout_seconds}")
 			print(f"server_root: {config.storage.root_path}")
 			print(f"fastdl_root: {config.storage.fastdl_root_path or 'not set'}")
+			print(f"sftp_publish: {str(config.storage.sftp.enabled).lower()}")
+			if config.storage.sftp.enabled:
+				print(f"sftp_host: {config.storage.sftp.host}:{config.storage.sftp.port}")
+				print(f"sftp_remote_fastdl_root: {config.storage.sftp.remote_fastdl_root_path}")
 			formats = ",".join(config.storage.compressed_formats) or "none"
 			print(f"compressed_formats: {formats}")
 			print(f"allow_overwrite: {str(config.storage.allow_overwrite).lower()}")
@@ -197,6 +202,7 @@ def main() -> None:
 		if args.uploads_command == "recover":
 			try:
 				result = recover_upload(storage, args.upload_id, force=args.force)
+				SftpPublisher(config.storage.sftp).delete_manifest_files(storage, args.upload_id)
 			except (FileNotFoundError, RuntimeError, ValueError) as exc:
 				print(f"error: {exc}", file=sys.stderr)
 				raise SystemExit(1) from None

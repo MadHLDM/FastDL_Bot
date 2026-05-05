@@ -4,6 +4,8 @@ __pycache__/
 .pytest-run/
 .pytest-tmp/
 .pytest-tmp-*/
+pytest-temp/
+pytest-temp-*/
 .venv/
 venv/
 dist/

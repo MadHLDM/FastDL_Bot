@@ -25,7 +25,20 @@
     "allow_overwrite": false,
     "backup_existing": true,
     "compressed_formats": [],
-    "install_lock_timeout_seconds": 300
+    "install_lock_timeout_seconds": 300,
+    "sftp": {
+      "enabled": false,
+      "host": null,
+      "port": 22,
+      "username": null,
+      "password": null,
+      "private_key_path": null,
+      "private_key_passphrase": null,
+      "remote_fastdl_root_path": null,
+      "known_hosts_path": null,
+      "strict_host_key_checking": true,
+      "connect_timeout_seconds": 30
+    }
   },
   "content_types": {
     "map": {

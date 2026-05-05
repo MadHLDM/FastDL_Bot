@@ -23,6 +23,7 @@ from .pending import (
 from .rate_limit import RateLimiter
 from .reports import preview_install, validation_summary
 from .storage import LocalStorage
+from .sftp_publisher import SftpPublisher
 from .uploads import list_upload_manifests, read_upload_manifest, recover_upload
 from .validator import ValidationError, validate_zip_file
 
@@ -39,6 +40,7 @@ class FastDLUploadBot(discord.Client):
         self.config = config
         self.tree = app_commands.CommandTree(self)
         self.storage = LocalStorage(config.storage)
+        self.sftp_publisher = SftpPublisher(config.storage.sftp)
         self._install_lock = asyncio.Lock()
         self._rate_limiter = RateLimiter(
             max_requests=config.discord.rate_limit_max_requests,
@@ -57,6 +59,39 @@ class FastDLUploadBot(discord.Client):
 
     async def on_ready(self) -> None:
         print(f"Logged in as {self.user} ({self.user.id if self.user else 'unknown'})")
+
+    def _install_and_publish(self, staging_dir: Path):
+        install_result = self.storage.install(staging_dir)
+        try:
+            self.sftp_publisher.publish_install_result(self.storage, install_result)
+        except Exception as exc:
+            LOGGER.exception(
+                "SFTP publish failed for upload_id=%s; rolling back local install",
+                install_result.upload_id,
+            )
+            try:
+                recover_upload(self.storage, install_result.upload_id, force=True)
+            except Exception:
+                LOGGER.exception(
+                    "local rollback failed after SFTP publish failure for upload_id=%s",
+                    install_result.upload_id,
+                )
+            raise RuntimeError(
+                "remote FastDL publish failed; local install was rolled back. "
+                f"Original error: {exc}"
+            ) from exc
+        return install_result
+
+    def _recover_and_unpublish(self, upload_id: str, force: bool):
+        result = recover_upload(self.storage, upload_id, force=force)
+        try:
+            self.sftp_publisher.delete_manifest_files(self.storage, upload_id)
+        except Exception as exc:
+            raise RuntimeError(
+                "local rollback finished, but remote FastDL cleanup failed. "
+                f"Original error: {exc}"
+            ) from exc
+        return result
 
     async def on_message(self, message: discord.Message) -> None:
         if not self.config.discord.enable_message_uploads:
@@ -179,7 +214,10 @@ class FastDLUploadBot(discord.Client):
                 try:
                     await asyncio.to_thread(shutil.copytree, content_dir, approval_dir, dirs_exist_ok=True)
                     async with self._install_lock:
-                        install_result = await asyncio.to_thread(self.storage.install, approval_dir)
+                        install_result = await asyncio.to_thread(
+                            self._install_and_publish,
+                            approval_dir,
+                        )
                 finally:
                     self.storage.cleanup_staging_dir(approval_dir)
             except (FileNotFoundError, RuntimeError, ValueError, FileExistsError) as exc:
@@ -297,7 +335,7 @@ class FastDLUploadBot(discord.Client):
                 await interaction.followup.send("Only FastDL admins can roll back uploads.", ephemeral=True)
                 return
             try:
-                result = await asyncio.to_thread(recover_upload, self.storage, upload_id, force=force)
+                result = await asyncio.to_thread(self._recover_and_unpublish, upload_id, force)
             except (FileNotFoundError, RuntimeError, ValueError) as exc:
                 message = str(exc)
                 if "without --force" in message:
@@ -432,7 +470,10 @@ class FastDLUploadBot(discord.Client):
                     )
                     return
                 async with self._install_lock:
-                    install_result = await asyncio.to_thread(self.storage.install, staging_dir)
+                    install_result = await asyncio.to_thread(
+                        self._install_and_publish,
+                        staging_dir,
+                    )
                 installed_relative = tuple(
                     self.storage.display_path(path)
                     for path in install_result.installed_files

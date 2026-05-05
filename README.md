@@ -59,6 +59,10 @@ Use `.env` for instance-specific values:
 - `FASTDL_FASTDL_ROOT_PATH`: optional local FastDL root. When set, compressed files are generated there.
 - `FASTDL_COMPRESSED_FORMATS`: comma-separated compressed formats, for example `gz`.
 - `FASTDL_INSTALL_LOCK_TIMEOUT_SECONDS`: timeout for the cross-process install lock.
+- `FASTDL_SFTP_ENABLED`: publish generated FastDL files to a remote SFTP server after local install.
+- `FASTDL_SFTP_HOST`, `FASTDL_SFTP_PORT`, and `FASTDL_SFTP_USERNAME`: remote SSH/SFTP login target.
+- `FASTDL_SFTP_PRIVATE_KEY_PATH` or `FASTDL_SFTP_PASSWORD`: SFTP authentication. Prefer a private key on production.
+- `FASTDL_SFTP_REMOTE_FASTDL_ROOT_PATH`: remote web root that serves FastDL files.
 - `FASTDL_MAP_CHANNEL_IDS` and `FASTDL_MAP_ROLE_IDS`: content-specific channel/role IDs. Equivalent variables exist for `PLAYERMODEL`, `SOUNDS`, `SPRITES`, and `ANGELSCRIPT_MAP`.
 
 Values from `.env` override equivalent fields from `config.json`.
@@ -145,6 +149,26 @@ FASTDL_COMPRESSED_FORMATS=gz
 ```
 
 With that setup, the bot installs `maps/test.bsp` in the normal root and generates `maps/test.bsp.gz` only in the FastDL root. If `fastdl_root_path` is empty or `null`, compressed files are generated next to the original files.
+
+## Remote FastDL over SFTP
+
+If the bot runs on one server, for example an Oracle VPS, while the FastDL web server lives elsewhere, keep local roots on the bot machine and enable SFTP publishing:
+
+```dotenv
+FASTDL_SERVER_ROOT_PATH=/srv/svencoop/svencoop_addon
+FASTDL_FASTDL_ROOT_PATH=/var/lib/fastdl-upload-bot/fastdl-cache
+FASTDL_COMPRESSED_FORMATS=gz
+
+FASTDL_SFTP_ENABLED=true
+FASTDL_SFTP_HOST=fastdl.example.com
+FASTDL_SFTP_PORT=22
+FASTDL_SFTP_USERNAME=fastdl-bot
+FASTDL_SFTP_PRIVATE_KEY_PATH=/home/fastdl-bot/.ssh/fastdl_upload
+FASTDL_SFTP_REMOTE_FASTDL_ROOT_PATH=/var/www/fastdl/svencoop
+FASTDL_SFTP_STRICT_HOST_KEY_CHECKING=true
+```
+
+The SFTP user only needs write access to the configured remote FastDL root. With `allow_overwrite=false`, the bot refuses to publish over an existing remote file. Keep strict host-key checking enabled and add the FastDL server key to the Oracle VPS user's `known_hosts`.
 
 To validate a package without installing:
 
