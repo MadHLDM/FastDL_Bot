@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.1.0 - 2026-05-05
+
+- Added optional SFTP publishing for FastDL files on a separate web server.
+- Added SFTP environment/config settings for host, auth, remote root, host-key checking, and timeouts.
+- Added atomic remote uploads with conflict checks when overwrites are disabled.
+- Added SFTP publish metadata to upload manifests.
+- Added rollback cleanup for files published to the remote FastDL server.
+- Documented Oracle VPS to remote FastDL deployment.
+- Added tests for SFTP config validation and remote publishing behavior.
+
 ## 1.0.0 - 2026-05-03
 
 - Added optional admin approval queue for uploads before installation.
